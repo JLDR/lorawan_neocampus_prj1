@@ -48,6 +48,7 @@
 #endif /* _BLACK_PILL */
 
 // LoRaWAN defines
+#define DISABLE_DUTY_CYCLE      1         // disabling 1% constraint
 #define DISABLE_ADR_MODE        1         // disabling Automatic Data Rate (ADR) mode
 #define JOIN_TIMEOUT            45        // seconds between two consecutive joins
 #define SX1276_RegVersion       0x42      // contains version of device

@@ -1,8 +1,16 @@
-//#include <SD.h>
+ /*
+ * Notes: 
+ * - DIO1 need to get exterally connected to PB0
+ * - correct <LMIC lib>/src/hal/hal.cpp according to
+ * https://www.thethingsnetwork.org/forum/t/big-stm32-boards-topic/13391/74
+ * https://lorawan.univ-tlse3.fr/admin#/dashboard
+ * François Jan.19  add low power mode
+ * François Dec.18  initial release
+ */
 
 #include "Fonctions.h"
 
-// https://lorawan.univ-tlse3.fr/admin#/dashboard
+// 
 //// This EUI must be in little-endian format, so least-significant-byte first. When copying an EUI from ttnctl output, this means to reverse
 //// the bytes. For TTN issued EUIs the last bytes should be 0xD5, 0xB3, 0x70.
 //static const u1_t DevEUI[8] PROGMEM = {0xAD, 0xDE, 0x02, 0x00, 0xAD, 0xDE, 0xAD, 0xDE};     // test avec 0xDEADDEAD0002DEAD
@@ -11,7 +19,13 @@
 //// In practice, a key taken from ttnctl can be copied as-is.
 //static const u1_t AppKey[16] PROGMEM = {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
 
-const uint16_t          TX_INTERVAL = 300;
+// Schedule TX every this many seconds (might become longer due to duty
+// cycle limitations).
+#ifdef DISABLE_DUTY_CYCLE
+const unsigned TX_INTERVAL = 30;
+#else
+const unsigned TX_INTERVAL = 300;
+#endif
 uint8_t                 _res;
 uint8_t                 i, j, k, l, m, n, t, p;
 char                    TabASCII[30];
@@ -101,6 +115,11 @@ void setup() {
   Serial.print(F("\n[setup] setup LoRaWAN link ..."));  // configure link
   Serial.flush();
   LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
+  #ifdef DISABLE_DUTY_CYCLE
+    Serial.print(F("\n[setup] DISABLED 1% DUTY-CYCLE !!!"));
+    Serial.flush();
+    delay(1000);
+  #endif
   #ifndef DISABLE_ADR_MODE
     LMIC_setAdrMode(true);
   #else
@@ -137,7 +156,7 @@ void setup() {
 }
 
 void loop() {
-  os_runloop_once();            // oslmic.c
+  os_runloop_once();          // oslmic.c
   endLoop();
 }
 

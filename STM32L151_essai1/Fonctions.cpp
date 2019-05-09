@@ -210,6 +210,10 @@ void onEvent(ev_t ev) {
       // during join, but because slow data rates change max TX
       // size, we don't use it in this example.
       LMIC_setLinkCheckMode(0);
+      #ifdef DISABLE_DUTY_CYCLE
+          // Disable duty cycle
+          LMIC.globalDutyRate = 0;
+      #endif
       _joined = true;
       break;
       /*  This event is defined but not used in the code. No point in wasting codespace on it.
