@@ -14,8 +14,9 @@
 /* ########################## VARIABLES EXTERNES ########################## */
 extern uint8_t              i, j, k, l, m, n, t, p;
 extern char                 TabASCII[30];
-extern uint8_t              PaquetMesures[26];                 
-extern const uint16_t       TX_INTERVAL = 300;
+extern uint8_t              PaquetMesures[MAX_NbrBYTES];
+extern uint8_t              OccupedCells;           
+//extern const unsigned       TX_INTERVAL;
 // This EUI must be in little-endian format, so least-significant-byte first. When copying an EUI from ttnctl output, this means to reverse
 // the bytes. For TTN issued EUIs the last bytes should be 0xD5, 0xB3, 0x70.
 static const u1_t DevEUI[8] PROGMEM = {0xAD, 0xDE, 0x02, 0x00, 0xAD, 0xDE, 0xAD, 0xDE};     // test avec 0xDEADDEAD0002DEAD
@@ -32,16 +33,24 @@ extern double               Mesure;
 extern double               Temp, Press, Press_SeaLevel, Altitude, Mes1;
 extern char                 *string1;
 extern char                 *string2;
+extern uint8_t              _res;
 
 /* ########################## VARIABLES LOCALES ########################## */
 static byte monthDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-static uint8_t mydata[] = "Hello from stm32l151";
-static uint8_t frame_deg[] = "C and ";
+//static uint8_t mydata[] = "Hello from stm32l151";
+static uint8_t frame_deg[] = "deg C, ";
+static uint8_t frame_hum[] = "%RH, ";
 static uint8_t frame_CapteurBMP180[] = "mbar";
 static osjob_t sendjob;                             // structure de oslmic.h
 bool _joined = false;                               // flag to tell if JOIN has been established
 uint8_t _lastJoin = -1;                             // seconds elapsed since last JOIN trial
-
+#ifdef DISABLE_DUTY_CYCLE
+  const unsigned TX_INTERVAL = 120;
+#else
+  const unsigned TX_INTERVAL = 300;
+#endif
+bool SETUP_event;
+lmic_t LMIC_objet;
 /* ########################## Objets ########################## */
 extern SFE_BMP180 CapteurBMP180;
 extern Adafruit_Si7021 CapteurSi7021;
@@ -65,6 +74,7 @@ void os_getDevKey(u1_t *buf) {
 void I2C_scanner(void) {
   byte error, address;
   int nDevices;
+  separateur(30, '-');
   Serial.println("Scanning...");
   nDevices = 0;
   for (address = 1; address < 127; address++) {
@@ -83,6 +93,7 @@ void I2C_scanner(void) {
   }
   if (nDevices == 0) Serial.println("No I2C devices found");
   else Serial.println("scanning done");
+  separateur(30, '-');
   delay(1000);
 }
 /****************************************************************************************************/
@@ -109,15 +120,24 @@ void do_send(osjob_t *j) {            // oslmic.h (structure avec type prédéfi
     Serial.println(F("OP_TXRXPEND, not sending"));
   } else {                            // Prepare upstream data transmission at the next possible time.
     //LMIC_setTxData2(1, mydata, sizeof(mydata) - 1, 0);    // int LMIC_setTxData2(u1_t port, xref2u1_t data, u1_t dlen, u1_t confirmed);
-    Mesures();                                              // Here the sensor information should be retrieved (Pressure: 300...1100 hPa)
+    MesuresFrame();                                              // Here the sensor information should be retrieved (Pressure: 300...1100 hPa)
+    _res = LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF11, DR_SF11), BAND_CENTI);  // (LMIC_setupChannel : lmic_eu868.c, DR_RANGE_MAP : lmic.h)
+    if (_res != 1 ) {
+      Serial.print(F("\n[setup] SF11 setup failed ..."));
+      Serial.flush();
+    }
+    LMIC_setDrTxpow(DR_SF11, 16);                                       // initialement le coefficient était à 14
     //LMIC_setTxData2(1, PaquetMesures, sizeof(PaquetMesures), 1);      // we want confirmation (ACK ?) (lmic.c)
-    LMIC_setTxData2(1, PaquetMesures, sizeof(PaquetMesures), 0);      // no acknowledge
+    LMIC_setTxData2(1, PaquetMesures, OccupedCells, 0);                 // no acknowledge
+    /*Serial.print(F("Fréquence : "));
+    Serial.println(LMIC_objet.freq);*/
     Serial.println(F("Packet queued"));
   }
   // we immediately set a new call
+  separateur(50, '#');
   Serial.print(F("\n[DATA] next data sending in "));
   Serial.print(TX_INTERVAL, DEC);
-  Serial.println(F(" seconds ..."));
+  Serial.println(F(" seconds"));
   Serial.flush();
   //os_setTimedCallback(&(*j), os_getTime() + sec2osticks(TX_INTERVAL), do_send);  // oslmic.c
   os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(TX_INTERVAL), do_send);
@@ -179,40 +199,43 @@ void onEvent(ev_t ev) {
     case EV_BEACON_TRACKED:
       Serial.println(F("EV_BEACON_TRACKED"));
       break;
-    case EV_JOINING:
+    case EV_JOINING:                    // at JOINING time, the device use SF12 to increase level sensibility of the receiver and to be able to get keys
+      Serial.println();
+      separateur(50, '_');
       Serial.println(F("EV_JOINING"));
       _joined = false;
       break;
     case EV_JOINED:
+      Serial.println();
+      separateur(50, '_');
       Serial.println(F("EV_JOINED"));
-      {
+      {                                       // SCOPE
         u4_t netid = 0;
         devaddr_t devaddr = 0;
-        u1_t nwkKey[16];
-        u1_t artKey[16];
-        LMIC_getSessionKeys(&netid, &devaddr, nwkKey, artKey);
+        u1_t NwkSKey[16];
+        u1_t AppSKey[16];
+        LMIC_getSessionKeys(&netid, &devaddr, NwkSKey, AppSKey);
         Serial.print(F("netid: "));
         Serial.println(netid, DEC);
         Serial.print(F("devaddr: "));
         Serial.println(devaddr, HEX);
-        Serial.print(F("artKey: "));
-        for (int i = 0; i < sizeof(artKey); ++i) {
-          Serial.print(artKey[i], HEX);
+        Serial.print(F("AppSKey: "));
+        for (int i = 0; i < sizeof(AppSKey); ++i) {
+          Serial.print(AppSKey[i], HEX);
         }
         Serial.println("");
-        Serial.print(F("nwkKey: "));
-        for (int i = 0; i < sizeof(nwkKey); ++i) {
-          Serial.print(nwkKey[i], HEX);
+        Serial.print(F("NwkSKey: "));
+        for (int i = 0; i < sizeof(NwkSKey); ++i) {
+          Serial.print(NwkSKey[i], HEX);
         }
         Serial.println("");
       }
-      // Disable link check validation (automatically enabled
-      // during join, but because slow data rates change max TX
-      // size, we don't use it in this example.
+      separateur(50, '_');
+      // Disable link check validation (automatically enabled during join), but because slow data rates 
+      // change max TX size, we don't use it in this example.
       LMIC_setLinkCheckMode(0);
       #ifdef DISABLE_DUTY_CYCLE
-          // Disable duty cycle
-          LMIC.globalDutyRate = 0;
+        LMIC.globalDutyRate = 0;          // Disable duty cycle
       #endif
       _joined = true;
       break;
@@ -282,23 +305,24 @@ void onEvent(ev_t ev) {
 /* Mesure de la température avec initialisation et acquisition d'une valeur flottante.              */
 /* The measurement is stored in the variable T. Function returns 1 if successful, 0 if failure.     */
 /****************************************************************************************************/
-double MesTemp(void) {
-  //Serial.println(F("Démarrage de la mesure avec la méthode startTemperature()"));
+double MesTemp(bool SETUP_event) {
   Etat = CapteurBMP180.startTemperature();
-  Serial.print(F("Réponse de la méthode : "));
-  Serial.println((uint8_t)Etat, DEC);
+  //Serial.print(F("Réponse de la méthode : "));
+  //Serial.println((uint8_t)Etat, DEC);
   if ((uint8_t)Etat == 5) {
     delay((uint8_t)Etat * 2);                          // Wait for the measurement to complete
     Etat = CapteurBMP180.getTemperature(Temp);
     if (Etat != 0) {
-      Serial.print("temperature : ");
-      dtostrf(Temp, 5, 2, TabASCII);
-      for (k = 0; k < 5; k++) Serial.print(TabASCII[k]);
-      Serial.print(" °C ou ");
-      Mes1 = ((9.0 / 5.0) * Temp) + 32.0;
-      Serial.print(Mes1, 2);              // deux décimales
-      Serial.println(" °F");
-      return Temp; 
+      if (SETUP_event) {
+        Serial.print(F("Temperature (BMP180) : "));
+        dtostrf(Temp, 5, 2, TabASCII);
+        for (k = 0; k < 5; k++) Serial.print(TabASCII[k]);
+        Serial.print(" °C ou ");
+        Mes1 = ((9.0 / 5.0) * Temp) + 32.0;
+        Serial.print(Mes1, 2);              // deux décimales
+        Serial.println(" °F");
+        return Temp;
+      }
     } else return 0.0;
   } else Serial.println("error starting temperature measurement\n");
 }
@@ -306,65 +330,86 @@ double MesTemp(void) {
 /* Mesure de la pression atmosphérique avec initialisation et acquisition d'une valeur flottante.   */
 /* The measurement is stored in the variable T. Function returns 1 if successful, 0 if failure.     */
 /****************************************************************************************************/
-double MesPress(void) {
-  double MyTemp;        // valeur locale utilisée pour calcul
-  MyTemp = MesTemp();
+double MesPress(bool SETUP_event) {
+  double MyTemp;                    // valeur locale utilisée pour calcul
+  MyTemp = MesTemp(false);          // to avoid leaflets
   Etat = CapteurBMP180.startPressure('3');
   if (Etat != 0) {
     delay(Etat);        
     Etat = CapteurBMP180.getPressure(Press, MyTemp);
     if (Etat != 0) {
-      Serial.print("absolute Capteur BMP180 : ");
-      dtostrf(Press, 7, 2, TabASCII);
-      for (k = 0; k < 7; k++) Serial.print(TabASCII[k]);
-      Serial.print(" mb or ");
+      if (SETUP_event) {
+        Serial.print("Atmospheric pressure (BMP180) : ");
+        dtostrf(Press, 7, 2, TabASCII);
+        for (k = 0; k < 7; k++) Serial.print(TabASCII[k]);
+        Serial.print(" mb or ");
+      }
       Mes1 = Press * 0.0295333727;
-      Serial.print(Mes1, 2);          // deux décimales
-      Serial.println(" inHg");
+      if (SETUP_event) {
+        Serial.print(Mes1, 2);          // deux décimales
+        Serial.println(F(" inHg"));
+      }
       Press_SeaLevel = CapteurBMP180.sealevel(Press ,ALTITUDE);
-      Serial.print("relative (sea-level) Capteur BMP180 : ");
-      Serial.print(Press_SeaLevel, 2);
-      Serial.print(" mb or, ");
+      if (SETUP_event) {
+        Serial.print(F("Relative sea-level (BMP180) : "));
+        Serial.print(Press_SeaLevel, 2);
+        Serial.print(F(" mb or, "));
+      }
       Mes1 = Press_SeaLevel * 0.0295333727;
-      Serial.print(Mes1, 2);
-      Serial.println(" inHg");
+      if (SETUP_event) {
+        Serial.print(Mes1, 2);
+        Serial.println(" inHg");
+      }
       Altitude = CapteurBMP180.altitude(Press, Press_SeaLevel);
-      Serial.print("computed altitude : ");
-      Serial.print((uint16_t)Altitude);
-      Serial.print(" meters or ");
+      if (SETUP_event) {
+        Serial.print(F("Computed altitude : "));
+        Serial.print((uint16_t)Altitude);
+        Serial.print(F(" meters or "));
+      }
       Mes1 = Altitude * 3.28084;
-      Serial.print(Mes1, 1);
-      Serial.println(" feet");
+      if (SETUP_event) {
+        Serial.print(Mes1, 1);
+        Serial.println(F(" feet"));
+      }
       return Press; 
     } else return 0.0;
-  } else Serial.println("error starting Capteur BMP180 measurement\n"); 
+  } else Serial.println(F("error starting Capteur BMP180 measurement\n")); 
 }
 /****************************************************************************************************/
 /* Acquisition de la température et de la pression atmosphérique avec mise en forme dans le tableau */
 /* PaquetMesures qui sera transmis en tant que paquet de la trame LoRa.                             */
+/* Après 26 caractères, il faut utiliser SF11.                                                      */
 /****************************************************************************************************/
-void Mesures(void) {                // uint8_t *Mesures(void);
+void MesuresFrame(void) {
+  OccupedCells = 0;
   memset(PaquetMesures, '\0', sizeof(PaquetMesures));
-  Mesure = MesTemp();
+  Mesure = MesTemp(false);
   dtostrf(Mesure, 5, 2, TabASCII);
-  for (k = 0; k < 5; k++) PaquetMesures[k] = (uint8_t)TabASCII[k];
-  PaquetMesures[5] = 0x20;
-  PaquetMesures[6] = 0xA7;                                                // => °
-  for (k = 0; k < 6; k++) PaquetMesures[7 + k] = frame_deg[k];            // "C and ";
-  Mesure = MesPress(); 
+  for (k = 0; k < 5; k++) PaquetMesures[OccupedCells++] = (uint8_t)TabASCII[k];
+  PaquetMesures[OccupedCells++] = 0x20;
+  //PaquetMesures[OccupedCells++] = 0xB0;     // => °
+  for (k = 0; k < 7; k++) PaquetMesures[OccupedCells++] = frame_deg[k];               // "deg C, " / "C, ";
+  Mesure = CapteurSi7021.readHumidity();
+  dtostrf(Mesure, 5, 2, TabASCII);
+  for (k = 0; k < 5; k++) PaquetMesures[OccupedCells++] = (uint8_t)TabASCII[k];
+  PaquetMesures[OccupedCells++] = 0x20;
+  for (k = 0; k < 5; k++) PaquetMesures[OccupedCells++] = frame_hum[k];               // "%RH, ";
+  Mesure = MesPress(false); 
   dtostrf(Mesure, 7, 2, TabASCII);
-  for (k = 0; k < 7; k++) PaquetMesures[13 + k] = (uint8_t)TabASCII[k];
-  PaquetMesures[20] = 0x20;
-  for (k = 0; k < 4; k++) PaquetMesures[21 + k] = frame_CapteurBMP180[k]; // "mbar";
-  PaquetMesures[26] = '\0';
-  //return (uint8_t *)PaquetMesures[0];
+  for (k = 0; k < 7; k++) PaquetMesures[OccupedCells++] = (uint8_t)TabASCII[k];
+  PaquetMesures[OccupedCells++] = 0x20;
+  for (k = 0; k < 4; k++) PaquetMesures[OccupedCells++] = frame_CapteurBMP180[k];     // "mbar";
+  PaquetMesures[OccupedCells] = '\0';                                                 // fin de chaîne
+  Serial.println();
+  separateur(50, '#');
   Serial.print(F("Paquet transmis : "));
-  for (k = 0; k < 27; k++) {
+  for (k = 0; k < OccupedCells; k++) {
     Serial.print("0x");
     Serial.print((char)PaquetMesures[k], HEX);
     Serial.print(' ');
   }
   Serial.println();
+  separateur(50, '#');
 }
 /****************************************************************************************************/
 /* Recherche du modèle de capteur Si7021 ou autre.                                                  */
@@ -381,7 +426,7 @@ void ModelFound(void) {
       Serial.println("Si7020");
       break;
     case SI_7021:
-      Serial.println("Si7021");
+      Serial.print(F("\n[setup] Si7021 init success : "));
       break;
     case SI_UNKNOWN:
     default:
@@ -389,8 +434,8 @@ void ModelFound(void) {
   }
   Serial.print(F("Rev("));
   Serial.print(CapteurSi7021.getRevision());
-  Serial.println(F(")"));
-  Serial.print(" Serial #");
+  Serial.print(F("), "));
+  Serial.print("Serial #");
   Serial.print(CapteurSi7021.sernum_a, HEX);
   Serial.println(CapteurSi7021.sernum_b, HEX);
 }
@@ -398,7 +443,7 @@ void ModelFound(void) {
 /* Mesure de la température.                                                                        */
 /****************************************************************************************************/
 void MesureTemp(void) {
-  Serial.print(F("Température du capteur Si7021 : "));
+  Serial.print(F("Temperature (Si7021) : "));
   Serial.print(CapteurSi7021.readTemperature(), 2);
   Serial.println(" °C");
 }
@@ -406,7 +451,7 @@ void MesureTemp(void) {
 /* Mesure de l'humidité.                                                                            */
 /****************************************************************************************************/
 void MesureHumidity(void) {
-  Serial.print(F("Humidité capteur Si7021 : "));
+  Serial.print(F("Humidity (Si7021) : "));
   Serial.print(CapteurSi7021.readHumidity(), 2);
   Serial.println(" % HR");
 }
@@ -442,6 +487,16 @@ void MesureHumidity(void) {
   delay(500);
   MyOled.setFont();
 }*/
+/****************************************************************************************************/
+/* Séparateur                                                                                       */
+/****************************************************************************************************/
+void separateur(uint8_t nbr_carac, char caract) {
+  for (i = 0; i < nbr_carac; i++) {
+    Serial.print(caract);
+  }
+  Serial.println();
+}
+
 
 /* ######################################################################################################## */
 // END of file

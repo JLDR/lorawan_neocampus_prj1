@@ -1,6 +1,4 @@
 
-
-
 #ifndef Fonctions_h_
 #define Fonctions_h_
 
@@ -18,9 +16,6 @@
 //#include          <Adafruit_GFX.h>        // automatiquement appelée par Adafruit_SSD1306.h
 //#include          <splash.h>
 //#include          <STM32LowPower.h>       // à éviter avec Windows
-//extern "C" {
-//  #include        <os.h>
-//}
 
 // ********************* MACROS *********************
 #define SIZEOFEXPR(x) sizeof(x)
@@ -48,11 +43,13 @@
 #endif /* _BLACK_PILL */
 
 // LoRaWAN defines
-#define DISABLE_DUTY_CYCLE      1         // disabling 1% constraint
-#define DISABLE_ADR_MODE        1         // disabling Automatic Data Rate (ADR) mode
+#define MAX_NbrBYTES            53
+#define DISABLE_DUTY_CYCLE      1         // disabling 1% constraint when defined
+//#define DISABLE_ADR_MODE        1         // disabling Automatic Data Rate (ADR) mode
 #define JOIN_TIMEOUT            45        // seconds between two consecutive joins
 #define SX1276_RegVersion       0x42      // contains version of device
-#define ALTITUDE                135.7     // Altitude of Toulouse in meters
+#define ALTITUDE                146.0     // Altitude of the town hall's Toulouse in meters
+
 
 
 typedef enum {
@@ -71,13 +68,14 @@ extern void I2C_scanner(void);
 extern void do_send(osjob_t *);
 extern void endLoop(void);
 extern void onEvent(ev_t);
-extern double MesTemp(void);
-extern double MesPress(void);
-extern void Mesures(void);
+extern double MesTemp(bool);
+extern double MesPress(bool);
+extern void MesuresFrame(void);
 extern void ModelFound(void);
 extern void MesureTemp(void);
 extern void MesureHumidity(void);
 //extern void initMyDisplay(void);
+extern void separateur(uint8_t, char);
 
 
 

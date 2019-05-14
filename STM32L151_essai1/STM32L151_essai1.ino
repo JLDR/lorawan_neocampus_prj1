@@ -1,35 +1,23 @@
  /*
  * Notes: 
- * - DIO1 need to get exterally connected to PB0
+ * - DIO1 (RxTimeout) need to get exterally connected to PB0
  * - correct <LMIC lib>/src/hal/hal.cpp according to
  * https://www.thethingsnetwork.org/forum/t/big-stm32-boards-topic/13391/74
  * https://lorawan.univ-tlse3.fr/admin#/dashboard
- * François Jan.19  add low power mode
- * François Dec.18  initial release
+ * François Jan.19  : add low power mode
+ * François Dec.18  : initial release
+ * J-L May 2019     : probe measures and transmission of a frame to the LoRaWAN gateway
+ * Quand on modifie le facteur SF, il faut désactiver le paramètre Automatic Data rate (ADR => #define DISABLE_ADR_MODE 1)
  */
 
 #include "Fonctions.h"
 
-// 
-//// This EUI must be in little-endian format, so least-significant-byte first. When copying an EUI from ttnctl output, this means to reverse
-//// the bytes. For TTN issued EUIs the last bytes should be 0xD5, 0xB3, 0x70.
-//static const u1_t DevEUI[8] PROGMEM = {0xAD, 0xDE, 0x02, 0x00, 0xAD, 0xDE, 0xAD, 0xDE};     // test avec 0xDEADDEAD0002DEAD
-//static const u1_t AppEUI[8] PROGMEM = {0xAD, 0xDE, 0x42, 0xAD, 0xDE, 0x42, 0xAD, 0xDE};     // neOCamous-Lora test 0xDEAD42DEAD42DEAD
-//// This key should be in big endian format (or, since it is not really a number but a block of memory, endianness does not really apply). 
-//// In practice, a key taken from ttnctl can be copied as-is.
-//static const u1_t AppKey[16] PROGMEM = {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
-
-// Schedule TX every this many seconds (might become longer due to duty
-// cycle limitations).
-#ifdef DISABLE_DUTY_CYCLE
-const unsigned TX_INTERVAL = 30;
-#else
-const unsigned TX_INTERVAL = 300;
-#endif
+// Schedule TX every this many seconds (might become longer due to duty cycle limitations)
 uint8_t                 _res;
 uint8_t                 i, j, k, l, m, n, t, p;
 char                    TabASCII[30];
-uint8_t                 PaquetMesures[24];
+uint8_t                 PaquetMesures[MAX_NbrBYTES];
+uint8_t                 OccupedCells;
 char                    Etat;
 double                  Mesure;
 double                  Temp, Press, Press_SeaLevel, Altitude, Mes1;
@@ -61,29 +49,26 @@ void setup() {
   Serial.print(F("\n[setup] beginning of setup ..."));
   Serial.flush();
   // BSFrance stm32 boards feature an oled display that needs to get a reset procedure
-  Serial.print(F("\n[setup] reset OLED display ..."));
-  Serial.flush();
+  //Serial.print(F("\n[setup] reset OLED display ..."));
+  //Serial.flush();
   //pinMode(OLED_RST, OUTPUT);
   //digitalWrite(OLED_RST, LOW);    // oled reset
   //delay(250);
   //digitalWrite(OLED_RST, HIGH);   // oled normal mode
-  delay(50);
-  Serial.println(F("\nI2C bus activation ..."));
+  //delay(50);
+  Serial.print(F("\n[setup] I2C bus activation ..."));
   Serial.flush();
-  delay(1000);
+  delay(250);
   if (CapteurBMP180.begin())
-    Serial.println("BMP180 init success");
+    Serial.print(F("\n[setup] BMP180 init success"));
   else {
-    Serial.println("BMP180 init fail (disconnected?)\n\n");
+    Serial.print(F("\n[setup] BMP180 init fail (disconnected?)\n\n"));
     while(1);                     // Pause forever.
   }
   if (!CapteurSi7021.begin()) {
-    Serial.println("Did not find Si7021 sensor!");
+    Serial.println(F("Did not find Si7021 sensor!"));
     while (1);
-  } else {
-    ModelFound();
-    //Serial.println(F("init success"));
-  }
+  } else ModelFound();
   //initMyDisplay();
   Serial.print(F("\n[setup] reset sx1276 ..."));
   Serial.flush();
@@ -119,18 +104,22 @@ void setup() {
     Serial.print(F("\n[setup] DISABLED 1% DUTY-CYCLE !!!"));
     Serial.flush();
     delay(1000);
+  #else
+    Serial.print(F("\n[setup] ENABLED 1% DUTY-CYCLE !!!"));
+    Serial.flush();
+    delay(1000);
   #endif
   #ifndef DISABLE_ADR_MODE
     LMIC_setAdrMode(true);
   #else
     LMIC_setAdrMode(false);         // ADR mode disabled
     uint8_t _res = 0;               // set channels
-    _res = LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF12),  BAND_CENTI);  // g-band
-    if( _res != 1 ) {
+    _res = LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF12), BAND_CENTI);  // (LMIC_setupChannel : lmic_eu868.c, DR_RANGE_MAP : lmic.h)
+    if (_res != 1) {
       Serial.print(F("\n[setup] channel setup failed ..."));
       Serial.flush();
     }
-    //LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);    // g-band
+    //LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);    // lmic_eu.like.h
     LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF12), BAND_CENTI);        // g-band
     //LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);    // g-band
     LMIC_setupChannel(2, 868500000, DR_RANGE_MAP(DR_SF12, DR_SF12), BAND_CENTI);        // g-band
@@ -149,10 +138,11 @@ void setup() {
   //for (int channel = 1; channel < 8; channel++) LMIC_enableChannel(channel);
   //LMIC_setLinkCheckMode(0);                 // Must be called only if a session is established
   I2C_scanner();
-  Temp = MesTemp();
-  Press = MesPress();
+  Temp = MesTemp(true);       // to display informations
+  Press = MesPress(true);
   MesureTemp();               // Si7021
   MesureHumidity();           // Si7021
+  separateur(30, '-');
 }
 
 void loop() {
