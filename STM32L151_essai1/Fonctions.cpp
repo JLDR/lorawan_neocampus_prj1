@@ -129,8 +129,8 @@ void do_send(osjob_t *j) {            // oslmic.h (structure avec type prédéfi
     LMIC_setDrTxpow(DR_SF11, 16);                                       // initialement le coefficient était à 14
     //LMIC_setTxData2(1, PaquetMesures, sizeof(PaquetMesures), 1);      // we want confirmation (ACK ?) (lmic.c)
     LMIC_setTxData2(1, PaquetMesures, OccupedCells, 0);                 // no acknowledge
-    /*Serial.print(F("Fréquence : "));
-    Serial.println(LMIC_objet.freq);*/
+    //Serial.print(F("Fréquence : "));                                  // méthode à trouver pour extraire la fréquence en upload pour transmettre les mesures
+    //Serial.println(LMIC_objet.freq);
     Serial.println(F("Packet queued"));
   }
   // we immediately set a new call
@@ -215,9 +215,9 @@ void onEvent(ev_t ev) {
         u1_t NwkSKey[16];
         u1_t AppSKey[16];
         LMIC_getSessionKeys(&netid, &devaddr, NwkSKey, AppSKey);
-        Serial.print(F("netid: "));
+        Serial.print(F("NetID: "));
         Serial.println(netid, DEC);
-        Serial.print(F("devaddr: "));
+        Serial.print(F("DevAddr: "));
         Serial.println(devaddr, HEX);
         Serial.print(F("AppSKey: "));
         for (int i = 0; i < sizeof(AppSKey); ++i) {

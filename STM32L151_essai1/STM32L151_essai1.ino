@@ -11,6 +11,7 @@
  */
 
 #include "Fonctions.h"
+#include "STM32LowPower.h"
 
 // Schedule TX every this many seconds (might become longer due to duty cycle limitations)
 uint8_t                 _res;
